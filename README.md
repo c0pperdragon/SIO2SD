@@ -1,7 +1,7 @@
 # SIO2SD
 An Arduino-based floppy drive emulator for the atari 8 bit computers.
 
-Instead of just buying a complete SIO2SD device, I decided to build my own using my trusty Ardinu Micro. 
+Instead of just buying a complete SIO2SD device, I decided to build my own using my trusty Arduino Micro. 
 This seems to have just the right number of pins for the purpose as well as the necessary interfaces. 
 Support for an SDCARD library is already included in the Arduino IDE.
 
