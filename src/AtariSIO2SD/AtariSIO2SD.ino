@@ -1,12 +1,13 @@
 #include <SPI.h>
 #include <SD.h>
 #include <TimerOne.h>
+#include <EEPROM.h>
 
 #define PIN_CHIPSELECT  13
 #define PIN_SIOCOMMAND  2
+#define EEPROM_ADDRESS  47
 
-
-// ------------------ DISC SELECTOR (LED DIGITS AND BUTTONS) -----------
+// ------------------ DISK SELECTOR (LED DIGITS AND BUTTONS) -----------
 // because the two digits are displayed in a multiplexted fasion (to reduce number of needed pins),
 // they will be displayed alternately. a timer interrupt  comes handy to do this.
 
@@ -15,6 +16,8 @@ byte prevbuttonstate[4];
 volatile byte digit0value;  
 volatile byte digit1value;  
 volatile int activitylight;
+int valuesavedelay;
+int savelight;
 byte activedigit; 
 
 // various digits                0      1      2      3      4      5      6      7      8     9
@@ -26,7 +29,7 @@ bool segment_leftbottom[10]  = { true,  false, true,  false, false, false, true,
 bool segment_righttop[10]    = { true,  true,  true,  true,  true,  false, false, true,  true, true  };
 bool segment_rightbottom[10] = { true,  true,  false, true,  true,  true,  true,  true,  true, true  };
 
-void initdiscselector()
+void initdiskselector()
 {
   int i;
 
@@ -36,10 +39,16 @@ void initdiscselector()
       prevbuttonstate[i] = HIGH;
   }
   
+  // read selector value at startup
+  byte s = EEPROM.read(EEPROM_ADDRESS);
+  if (s>99) s=0;
+  
   // init visible digit values and toggle register
-  digit0value = 0;
-  digit1value = 0;
+  digit0value = s % 10;
+  digit1value = s / 10;
   activedigit = 0;
+  valuesavedelay = 0;
+  savelight = 0;
   activitylight = 0;
   
   // digit selectors are active high (turn off everything at begin)
@@ -55,8 +64,8 @@ void initdiscselector()
   }
   
   // start timer
-  Timer1.initialize(5000);     // toggle with 100 Hz   
-  Timer1.attachInterrupt(polldiscselector);    
+  Timer1.initialize(5000);     // call with 200 Hz   
+  Timer1.attachInterrupt(polldiskselector);    
 }
 
 
@@ -70,7 +79,7 @@ int setactivitylight()
     activitylight = 10;  
 }
 
-void polldiscselector()   // interrupt service routine (must not take much time)
+void polldiskselector()   // interrupt service routine (must not take much time)
 {
   // --- query button changes ---
   int i;
@@ -106,14 +115,32 @@ void polldiscselector()   // interrupt service routine (must not take much time)
                        }
                        break;
             }
+            valuesavedelay = 600; // 3 seconds before save
         }
       }
   } 
+  
+  // --- handling of delay before saving the current selected value
+  if (valuesavedelay>0)
+  {
+    valuesavedelay --;
+    if (valuesavedelay==0)
+    {
+      EEPROM.update(EEPROM_ADDRESS, digit0value + digit1value*10);
+      savelight = 200;
+    }
+  }
 
   // --- count down activity light duration
   if (activitylight>0)
   {
      activitylight--;
+  }
+
+  // --- count down save light duration
+  if (savelight>0)
+  {
+     savelight--;
   }
   
   // --- display digits alternatingly ----
@@ -149,7 +176,7 @@ void polldiscselector()   // interrupt service routine (must not take much time)
      digitalWrite (8, segment_leftbottom[v] ? LOW : HIGH);
      digitalWrite (5, segment_righttop[v] ? LOW : HIGH);  
      digitalWrite (6, segment_rightbottom[v] ? LOW : HIGH);
-     digitalWrite (9, HIGH);         // DOT is unused
+     digitalWrite (9, savelight>0 ? LOW:HIGH);   // the DOT is used to show settings saving 
 
      digitalWrite (11, HIGH);  // turn on digit 1
    }
@@ -160,22 +187,21 @@ void polldiscselector()   // interrupt service routine (must not take much time)
 
 bool didinitsd = false;
 
-File discfile;  
-unsigned int discsize;         // size in sectors
-bool discreadonly;
+File diskfile;  
+unsigned int disksize;         // size in sectors
 
-void opendiscfile(int index)
+void opendiskfile(int index)
 {  
-  // check if desired file is already open
-  if (discfile && isrequesteddiscfile(discfile,index))
+  // check if desired file is already open - continue to use it
+  if (diskfile && isrequesteddiskfile(diskfile,index))
   {    
     return;
   } 
   
-  // before switching disc file, close previous one if still open
-  if (discfile )
+  // before switching disk file, close previous one if still open
+  if (diskfile )
   {
-    discfile.close();
+    diskfile.close();
   }
   
   // if not done, try to initialize the SD subsystem
@@ -191,81 +217,92 @@ void opendiscfile(int index)
   }
         
   // try to scan the files in the ATARI directory on the SDCARD and 
-  // locate the file name beginning with the index (2 digits).
+  // locate the file name beginning with the correct index (2 digits).
+  char fullname[100];
+  fullname[0] = '\0';
+  
   File root = SD.open("ATARI");
   if (!root || !root.isDirectory())
-  {
-      Serial.println("Can not locate ATARI directory");
-      return;    
+  { Serial.println("Can not locate ATARI/ directory");
+    return;             
   }  
-  for (;;)
-  {  File entry = root.openNextFile(O_RDWR);
-     if (!entry) break;
-Serial.print("trying file: ");
-Serial.println(entry.name());
-
-     // check if name matches
-     if (isrequesteddiscfile(entry,index))
-     {
-       Serial.print("Trying to open ");
-       Serial.println(entry.name());      
-       
-       // read the header
-       byte header[16];
-       int didread = entry.readBytes(header,16);
-       if (didread!=16)
-       {
-          Serial.println("Can not read file header");
-          goto incorrect;          
-       }
-       // check for signature and other settings
-       if (header[0]!=0x96 || header[1]!=0x02)
-       {
-          Serial.println("Magic number not present");
-          goto incorrect;          
-       }
-       if (header[4]!=0x80 || header[5]!=0x00)
-       {
-          Serial.println("Can only handle 128 byte sectors");
-          goto incorrect;          
-       }
-       unsigned long paragraphs = header[6];
-       paragraphs = (paragraphs<<8) | header[3];
-       paragraphs = (paragraphs<<8) | header[2];
-       if (paragraphs<8 || paragraphs>0x70000)
-       {
-          Serial.println("Disk file size out of range.");
-          goto incorrect;                   
-       }
-       
-       // seems to be a valid diskfile - use it
-       discfile = entry;
-       discsize = paragraphs >> 3;
-       discreadonly = (header[15]&1 == 1);
-       
-       Serial.print("SIZE: ");
-       Serial.print(discsize);
-       Serial.print(" sectors of 128 bytes");
-       Serial.println(discreadonly ? " (readonly)": "");
-       
-       break;   // stop searching
-     }
-    
-    // incorrect file
-  incorrect:
+  while (fullname[0]=='\0')
+  { File entry = root.openNextFile();
+    if (!entry)
+    { Serial.print("Could not find file for disk ");
+      Serial.println(index);
+      root.close();
+      return;
+    }
+    // check if name matches
+    if (isrequesteddiskfile(entry,index))
+    { // fill data into the fullname variable (which terminates the loop)
+      strcat (fullname, "ATARI/");
+      strcat (fullname, entry.name());
+    }
     entry.close();
-  }
-  
+  }      
   root.close();
   
-  if (!discfile)
-  {
-     Serial.print("Could not find file for disc ");
-     Serial.println(index);
+  // try to open the file in read-write mode, and if this does not
+  // succeed in read-only mode
+  Serial.print("Trying to open ");
+  Serial.println(fullname);      
+
+  bool readonly = false;
+  diskfile = SD.open(fullname, FILE_WRITE);
+  if (diskfile)
+  {  diskfile.seek(0);
   }
+  else
+  { diskfile = SD.open(fullname, FILE_READ);
+    readonly = true;
+  }  
+  // abort if not possible to open
+  if (!diskfile)
+  { Serial.print("Can not open disk file");
+    Serial.println(fullname);
+    return;
+  }       
+  // read the header
+  byte header[16];
+  int didread = diskfile.readBytes(header,16);
+  if (didread!=16)
+  { Serial.println("Can not read file header");
+    diskfile.close();
+    return;
+  }
+  // check for signature and other settings
+  if (header[0]!=0x96 || header[1]!=0x02)
+  { Serial.println("Magic number not present");
+    diskfile.close();
+    return;
+  }
+  if (header[4]!=0x80 || header[5]!=0x00)
+  { Serial.println("Can only handle 128 byte sectors");
+    diskfile.close();     
+    return;
+  }
+
+  unsigned long paragraphs = header[6];
+  paragraphs = (paragraphs<<8) | header[3];
+  paragraphs = (paragraphs<<8) | header[2];
+  if (paragraphs<8 || paragraphs>0x70000)
+  { Serial.println("Disk file size out of range.");
+    diskfile.close();
+    return;
+  }
+  
+  // seems to be a valid disk file - use it
+  disksize = paragraphs >> 3;
+       
+  Serial.print("SIZE: ");
+  Serial.print(disksize);
+  Serial.print(" sectors of 128 bytes");
+  Serial.println(readonly ? "(read only)" : " (writeable)" );
 }
 
-bool isrequesteddiscfile(File f, int index)
+bool isrequesteddiskfile(File f, int index)
 {
   char* n = f.name();
   return (n[0]>='0' && n[0]<='9' && n[1]>='0' && n[1]<='9' && ((n[0]-'0')*10 + n[1]-'0')==index);
@@ -274,29 +311,29 @@ bool isrequesteddiscfile(File f, int index)
 
 bool readsector(unsigned int sector, byte* data)
 {
-  if (!discfile || sector>=discsize)
+  if (!diskfile || sector>=disksize)
   {  return false;
   }
-  if (!discfile.seek(16+((unsigned long)sector)*128))
+  if (!diskfile.seek(16+((unsigned long)sector)*128))
   {  return false;
   }
-  return discfile.readBytes(data, 128) == 128;
+  return diskfile.readBytes(data, 128) == 128;
 }
 
 bool writesector(unsigned int sector, byte* data)
 {
-  if (!discfile || sector>=discsize)
+  if (!diskfile || sector>=disksize)
   {  return false;
   }
-  if (!discfile.seek(16+((unsigned long)sector)*128))
+  if (!diskfile.seek(16+((unsigned long)sector)*128))
   {  return false;
   }
-  return discfile.write(data, 128) == 128;
+  return diskfile.write(data, 128) == 128;
 }
 
-bool discavailable()
+bool diskavailable()
 {
-    if (discfile)
+    if (diskfile)
     {  return true;
     }
     return false;
@@ -369,10 +406,10 @@ void logdata(byte* data, int length)
 
 void handlecommand_status()
 {
-  opendiscfile(getdiskselectorvalue());
+  opendiskfile(getdiskselectorvalue());
 
   byte status[4];
-  if (discavailable())
+  if (diskavailable())
   {  status[0] = 0x10;  // status flags byte 0  (motor=on, single density)
      status[1] = 0x00;  // status flags byte 1
      status[2] = 0xe0;  // format timeout 
@@ -391,7 +428,7 @@ void handlecommand_status()
 void handlecommand_read(unsigned int sector)
 {
    setactivitylight();
-  opendiscfile(getdiskselectorvalue());
+  opendiskfile(getdiskselectorvalue());
  
   byte data[128];
   if (!readsector(sector,data))
@@ -399,12 +436,6 @@ void handlecommand_read(unsigned int sector)
     Serial1.write('E');
     return;
   }      
-  
-//  Serial.print(sector);
-//  logdata(data,128);
-
-//  bool evensector = (sector&1) == 0;
-//  setdigitsanddots(getselecteddisc(), evensector,!evensector);
   
   Serial1.write('C');
   sendwithchecksum(data,128);
@@ -424,7 +455,7 @@ void handlecommand_write(unsigned int sector)
    Serial1.write('A');
    
    setactivitylight();
-   opendiscfile(getdiskselectorvalue());
+   opendiskfile(getdiskselectorvalue());
  
   if (!writesector(sector,data))
   {
@@ -433,13 +464,7 @@ void handlecommand_write(unsigned int sector)
     return;
   }      
   
-//  Serial.print(sector);
-//  logdata(data,128);
-
-//  bool evensector = (sector&1) == 0;
-//  setdigitsanddots(getselecteddisc(), evensector,!evensector);
-  
-   delay(1);      
+  delay(1);      
   Serial1.write('C');
 }
 
@@ -537,14 +562,13 @@ void handle_sio()
 void setup() {
   // start serial monitor for debugging
   Serial.begin(9600);       
-//  while( Serial.read()<0);
 
   // configure connection to the SIO interface
   pinMode(PIN_SIOCOMMAND,INPUT);
   Serial1.begin(19200, SERIAL_8N1);  
   
   // start displaying digits  
-  initdiscselector();
+  initdiskselector();
 }
 
 void loop()
