@@ -23,9 +23,11 @@ After being connected to the 5 correct pins from the atari port which also provi
 the device needs a SDCARD containing the necessary disk files. Currently only .ats files with a sector size of 128 byte 
 (which seems to be the standard) are supported. Because there is no elaborated user-interface on the device, 
 the naming and location of the files need to follow a fixed system: The files are searched for in a directory ATARI/
-on the root of the SDCARD. Every disk file must be named nnANYTNG.ATS with two leading digits that correspond to the 
-numeric display on the device. Only one disk file per 2-digit-code can be selected - this limits the number
-of disk files to 100. If more disk files are needed, they must be stored on another SDCARD.
+on the root of the SDCARD. Every disk file must be named nn_Anything.ats with two leading digits that correspond to the 
+numeric display on the device and the mandatory '_' character. Multiple concurrent disk drives will be emulated when there 
+are files with name nnBAnything.ats up to nnHAnything.ats. This can be useful to provide writeable save-disks for certain games.
+The total number of selectable configurations is 100 which is limited by the two digit display.
+If more disk files are needed, they must be stored on another SDCARD.
 With the 4 buttons the number in the display can be changed (+1, -1, +10, -10) to select a different file. 
 If no file for the number can be found, the device emulates an empty floppy drive. 
 

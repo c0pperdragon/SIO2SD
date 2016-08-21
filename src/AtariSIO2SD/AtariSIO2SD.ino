@@ -1,3 +1,6 @@
+// --------- Program code for the IOS2SD atari disk drive emulator -----------
+// Needs to be compiled for an Arduino Micro 
+
 #include <SPI.h>
 #include <SD.h>
 #include <TimerOne.h>
@@ -190,10 +193,10 @@ bool didinitsd = false;
 File diskfile;  
 unsigned int disksize;         // size in sectors
 
-void opendiskfile(int index)
+void opendiskfile(byte drive, int index)
 {  
   // check if desired file is already open - continue to use it
-  if (diskfile && isrequesteddiskfile(diskfile,index))
+  if (diskfile && isrequesteddiskfile(diskfile,drive,index))
   {    
     return;
   } 
@@ -230,12 +233,14 @@ void opendiskfile(int index)
   { File entry = root.openNextFile();
     if (!entry)
     { Serial.print("Could not find file for disk ");
-      Serial.println(index);
+      Serial.print(index);
+      Serial.print(" in drive ");
+      Serial.println(drive);
       root.close();
       return;
     }
     // check if name matches
-    if (isrequesteddiskfile(entry,index))
+    if (isrequesteddiskfile(entry,drive,index))
     { // fill data into the fullname variable (which terminates the loop)
       strcat (fullname, "ATARI/");
       strcat (fullname, entry.name());
@@ -302,10 +307,14 @@ void opendiskfile(int index)
   Serial.println(readonly ? "(read only)" : " (writeable)" );
 }
 
-bool isrequesteddiskfile(File f, int index)
+bool isrequesteddiskfile(File f, byte drive, int index)
 {
   char* n = f.name();
-  return (n[0]>='0' && n[0]<='9' && n[1]>='0' && n[1]<='9' && ((n[0]-'0')*10 + n[1]-'0')==index);
+  if (n[0]>='0' && n[0]<='9' && n[1]>='0' && n[1]<='9' && ((n[0]-'0')*10 + n[1]-'0')==index) {
+    if (n[2]=='_' && drive==0) return true;
+    if (n[2]>='B' && n[2]<='H' && n[2]-'A'==drive) return true;
+  }
+  return false;
 }
 
 
@@ -404,9 +413,9 @@ void logdata(byte* data, int length)
       Serial.println();  
 }
 
-void handlecommand_status()
+void handlecommand_status(byte drive)
 {
-  opendiskfile(getdiskselectorvalue());
+  opendiskfile(drive, getdiskselectorvalue());
 
   byte status[4];
   if (diskavailable())
@@ -425,10 +434,10 @@ void handlecommand_status()
   sendwithchecksum(status,4);
 }
 
-void handlecommand_read(unsigned int sector)
+void handlecommand_read(byte drive, unsigned int sector)
 {
    setactivitylight();
-  opendiskfile(getdiskselectorvalue());
+  opendiskfile(drive, getdiskselectorvalue());
  
   byte data[128];
   if (!readsector(sector,data))
@@ -441,7 +450,7 @@ void handlecommand_read(unsigned int sector)
   sendwithchecksum(data,128);
 }
 
-void handlecommand_write(unsigned int sector)
+void handlecommand_write(byte drive, unsigned int sector)
 { 
    byte data[128];
    if (!receivewithchecksum(data,128))
@@ -455,7 +464,7 @@ void handlecommand_write(unsigned int sector)
    Serial1.write('A');
    
    setactivitylight();
-   opendiskfile(getdiskselectorvalue());
+   opendiskfile(drive, getdiskselectorvalue());
  
   if (!writesector(sector,data))
   {
@@ -523,11 +532,11 @@ void handle_sio()
       Serial.print("Ignored command with invalid checksum");
       return;
     }
-    // when the command is not inteded for this device, ignore it
-    if (command[0]!=0x31)
+    // when the command is not inteded for a floppy device, ignore it
+    if (command[0]<0x31 || command[0]>0x39)
     {              
-//      Serial.print("Received command for different device ");
-//      Serial.println(command[0], HEX);
+      Serial.print("Received command for different device ");
+      Serial.println(command[0], HEX);
       return;       
     }
     
@@ -537,18 +546,18 @@ void handle_sio()
           logcommand(command);
           Serial1.write('A');
           delay(1);
-          handlecommand_status();
+          handlecommand_status(command[0]-0x31);
           break;
         case 0x52:  // READ
           logcommand(command);
           Serial1.write('A');
           delay(1);
-          handlecommand_read( ((unsigned int)command[2]) + (((unsigned int)command[3])<<8) - 1);
+          handlecommand_read(command[0]-0x31, ((unsigned int)command[2]) + (((unsigned int)command[3])<<8) - 1);
           break;
         case 0x57:   // WRITE WITH VERIFY
           logcommand(command);
           Serial1.write('A');
-          handlecommand_write( ((unsigned int)command[2]) + (((unsigned int)command[3])<<8) - 1);
+          handlecommand_write(command[0]-0x31, ((unsigned int)command[2]) + (((unsigned int)command[3])<<8) - 1);
           break;
         default:
           Serial1.write('N');
