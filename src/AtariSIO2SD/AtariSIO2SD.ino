@@ -1,18 +1,56 @@
 // --------- Program code for the IOS2SD atari disk drive emulator -----------
-// Needs to be compiled for an Arduino Micro 
+// This sketch support the device design using the Arduino Micro, as well as 
+// the design built on a bare Atmega382p with 8Mhz (the miniature 1050 floppy drive)). 
+// At compile time, the appropriate pins and settings will be used.
 
 #include <SPI.h>
 #include <SD.h>
 #include <TimerOne.h>
 #include <EEPROM.h>
 
-#define PIN_CHIPSELECT  13
-#define PIN_SIOCOMMAND  2
-#define EEPROM_ADDRESS  47
+
+// all settings for the Arduino Micro based design
+#if defined(__AVR_ATmega32U4__)
+  #define SIO Serial1
+  #define PRINT Serial.print
+  #define PRINTLN Serial.println
+  #define PRINTBEGIN Serial.begin
+  #define PIN_CHIPSELECT  13  
+  #define PIN_SIOCOMMAND  2
+  #define PIN_DIGIT0 12
+  #define PIN_DIGIT1 11
+  byte pin_segments0[8] = {3,6,7,5,9,10,8,4};
+  byte pin_segments1[8] = {3,7,4,10,8,5,6,9};
+  byte pin_buttons[4] = {A0,A1,A2,A3};
+  #define DIGITACTIVE     HIGH
+  #define DIGITINACTIVE   LOW
+  #define SEGMENTACTIVE   LOW
+  #define SEGMENTINACTIVE HIGH   
+// all settings for the miniature 1050
+#else
+  #define SIO Serial
+  #define PRINT(...)        1
+  #define PRINTLN(...)      1
+  #define PRINTBEGIN(...);  1
+  #define PIN_CHIPSELECT  10  
+  #define PIN_SIOCOMMAND  2
+  #define PIN_DIGIT0 A4
+  #define PIN_DIGIT1 3
+  byte pin_segments0[8] = {A1,5,6,4,A5,A0,A2,A3}; 
+  byte pin_segments1[8] = {4,A2,A0,A3,A1,5,A5,6};  
+  byte pin_buttons[4] = {8,9,7,9};  // only two connected, pin 9 is n.c.
+  #define DIGITACTIVE     LOW
+  #define DIGITINACTIVE   HIGH
+  #define SEGMENTACTIVE   HIGH
+  #define SEGMENTINACTIVE LOW   
+#endif
+
 
 // ------------------ DISK SELECTOR (LED DIGITS AND BUTTONS) -----------
 // because the two digits are displayed in a multiplexted fasion (to reduce number of needed pins),
 // they will be displayed alternately. a timer interrupt  comes handy to do this.
+
+#define EEPROM_ADDRESS  47
 
 byte prevbuttonstate[4];
 
@@ -23,22 +61,25 @@ int valuesavedelay;
 int savelight;
 byte activedigit; 
 
-// various digits                0      1      2      3      4      5      6      7      8     9
-bool segment_top[10]         = { true,  false, true,  true,  false, true,  true,  true,  true, true  };
-bool segment_middle[10]      = { false, false, true,  true,  true,  true,  true,  false, true, true  };
-bool segment_bottom[10]      = { true,  false, true,  true,  false, true,  true,  false, true, true  };
-bool segment_lefttop[10]     = { true,  false, false, false, true,  true,  true,  false, true, true  };
-bool segment_leftbottom[10]  = { true,  false, true,  false, false, false, true,  false, true, false };
-bool segment_righttop[10]    = { true,  true,  true,  true,  true,  false, false, true,  true, true  };
-bool segment_rightbottom[10] = { true,  true,  false, true,  true,  true,  true,  true,  true, true  };
+// various digits              
+bool segmentsfordigits[7][10] = {
+    // 0      1      2      3      4      5      6      7      8     9
+  { true,  false, true,  true,  false, true,  true,  true,  true, true  },
+  { false, false, true,  true,  true,  true,  true,  false, true, true  },
+  { true,  false, true,  true,  false, true,  true,  false, true, true  },
+  { true,  false, false, false, true,  true,  true,  false, true, true  },
+  { true,  false, true,  false, false, false, true,  false, true, false },
+  { true,  true,  true,  true,  true,  false, false, true,  true, true  },
+  { true,  true,  false, true,  true,  true,  true,  true,  true, true  }
+};
 
 void initdiskselector()
 {
-  int i;
+  byte i;
 
   // init input buttons
-  for (int i=0; i<4; i++)
-  {   pinMode(A0+i, INPUT);
+  for (i=0; i<4; i++)
+  {   pinMode(pin_buttons[i], INPUT_PULLUP);
       prevbuttonstate[i] = HIGH;
   }
   
@@ -54,16 +95,16 @@ void initdiskselector()
   savelight = 0;
   activitylight = 0;
   
-  // digit selectors are active high (turn off everything at begin)
-  pinMode(11, OUTPUT);
-  digitalWrite (11, LOW);
-  pinMode(12, OUTPUT);
-  digitalWrite (12, LOW);  
-  // individual digit segments are active low (turn off everything at begin)
-  for (i=3; i<=10; i++)
+  // configure and turn of digit selectors 
+  pinMode(PIN_DIGIT0, OUTPUT);
+  digitalWrite (PIN_DIGIT0, DIGITINACTIVE);
+  pinMode(PIN_DIGIT1, OUTPUT);
+  digitalWrite (PIN_DIGIT1, DIGITINACTIVE);  
+  // configure and turn off individual digits
+  for (i=0; i<8; i++)
   {    
-    pinMode(i, OUTPUT);
-    digitalWrite (i, HIGH);
+    pinMode(pin_segments0[i], OUTPUT);
+    digitalWrite (pin_segments0[i], SEGMENTINACTIVE);
   }
   
   // start timer
@@ -85,10 +126,10 @@ int setactivitylight()
 void polldiskselector()   // interrupt service routine (must not take much time)
 {
   // --- query button changes ---
-  int i;
+  byte i;
   for (i=0; i<4; i++)
   {
-      byte s = digitalRead(A0+i);
+      byte s = digitalRead(pin_buttons[i]);
       if (s!=prevbuttonstate[i])
       {
         prevbuttonstate[i]=s;
@@ -100,22 +141,9 @@ void polldiskselector()   // interrupt service routine (must not take much time)
                        break;
                case 1: digit1value = digit1value>0 ? digit1value-1 : 9;
                        break;
-               case 2: if (digit0value<9)
-                       {  digit0value++;
-                       }
-                       else 
-                       {  digit0value=0;
-                          digit1value = digit1value<9 ? digit1value+1 : 0;
-                       }
+               case 2: digit0value = digit0value<9 ? digit0value+1 : 0;
                        break;
-               case 3: if (digit0value>0)
-                       {  digit0value--;
-                       }
-                       else
-                       {
-                         digit0value = 9;
-                         digit1value = digit1value>0 ? digit1value-1 : 9;
-                       }
+               case 3: digit0value = digit0value>0 ? digit0value-1 : 9;
                        break;
             }
             valuesavedelay = 600; // 3 seconds before save
@@ -148,41 +176,28 @@ void polldiskselector()   // interrupt service routine (must not take much time)
   
   // --- display digits alternatingly ----
   // turn off previously active digit
-  digitalWrite (11, LOW);
-  digitalWrite (12, LOW);
+  digitalWrite (PIN_DIGIT0, DIGITINACTIVE);
+  digitalWrite (PIN_DIGIT1, DIGITINACTIVE);
   
   // switch to other digit
   activedigit = 1-activedigit;
   
   // turn on/off digit segments as needed (pin assignment is very arbitrary)
-  if (activedigit==0)
-  {
-     byte v = digit0value;
-     digitalWrite (3, segment_top[v] ? LOW : HIGH);
-     digitalWrite (6, segment_middle[v] ? LOW : HIGH);
-     digitalWrite (7, segment_bottom[v] ? LOW : HIGH);
-     digitalWrite (5, segment_lefttop[v] ? LOW : HIGH);  
-     digitalWrite (9, segment_leftbottom[v] ? LOW : HIGH);
-     digitalWrite (10, segment_righttop[v] ? LOW : HIGH);  
-     digitalWrite (8, segment_rightbottom[v] ? LOW : HIGH);
-     digitalWrite (4, activitylight>0 ? LOW:HIGH);   // the DOT is used to show activity 
-  
-     digitalWrite (12, HIGH);  // turn on digit 0
-   }
-   else
-   {
-     byte v = digit1value;
-     digitalWrite (3, segment_top[v] ? LOW : HIGH);
-     digitalWrite (7, segment_middle[v] ? LOW : HIGH);
-     digitalWrite (4, segment_bottom[v] ? LOW : HIGH);
-     digitalWrite (10, segment_lefttop[v] ? LOW : HIGH);  
-     digitalWrite (8, segment_leftbottom[v] ? LOW : HIGH);
-     digitalWrite (5, segment_righttop[v] ? LOW : HIGH);  
-     digitalWrite (6, segment_rightbottom[v] ? LOW : HIGH);
-     digitalWrite (9, savelight>0 ? LOW:HIGH);   // the DOT is used to show settings saving 
-
-     digitalWrite (11, HIGH);  // turn on digit 1
-   }
+  if (activedigit==0) {
+    byte v = digit0value;
+    for (i=0; i<7; i++) {
+       digitalWrite (pin_segments0[i], segmentsfordigits[i][v] ? SEGMENTACTIVE : SEGMENTINACTIVE);
+    }
+    digitalWrite (pin_segments0[7], activitylight>0 ? SEGMENTACTIVE : SEGMENTINACTIVE);   // the DOT is used to show activity 
+    digitalWrite (PIN_DIGIT0, DIGITACTIVE);  // turn on digit 0
+  } else {
+    byte v = digit1value;
+    for (i=0; i<7; i++) {
+       digitalWrite (pin_segments1[i], segmentsfordigits[i][v] ? SEGMENTACTIVE : SEGMENTINACTIVE);
+    }
+     digitalWrite (pin_segments1[7], savelight>0 ? SEGMENTACTIVE : SEGMENTINACTIVE);   // the DOT is used to show settings saving 
+     digitalWrite (PIN_DIGIT1, DIGITACTIVE);  // turn on digit 1
+  }  
 }
 
 
@@ -213,7 +228,7 @@ void opendiskfile(byte drive, int index)
       pinMode(PIN_CHIPSELECT,OUTPUT);
       digitalWrite(PIN_CHIPSELECT,HIGH);
       if (!SD.begin(PIN_CHIPSELECT)) {
-        Serial.println("SDCard failed, or not present");
+        PRINTLN("SDCard failed, or not present");
         return;
       }
       didinitsd = true;
@@ -224,18 +239,18 @@ void opendiskfile(byte drive, int index)
   char fullname[100];
   fullname[0] = '\0';
   
-  File root = SD.open("ATARI");
+  File root = SD.open(F("ATARI"));
   if (!root || !root.isDirectory())
-  { Serial.println("Can not locate ATARI/ directory");
+  { PRINTLN(F("Can not locate ATARI/ directory"));
     return;             
   }  
   while (fullname[0]=='\0')
   { File entry = root.openNextFile();
     if (!entry)
-    { Serial.print("Could not find file for disk ");
-      Serial.print(index);
-      Serial.print(" in drive ");
-      Serial.println(drive);
+    { PRINT(F("Could not find file for disk "));
+      PRINT(index);
+      PRINT(F(" in drive "));
+      PRINTLN(drive);
       root.close();
       return;
     }
@@ -251,8 +266,8 @@ void opendiskfile(byte drive, int index)
   
   // try to open the file in read-write mode, and if this does not
   // succeed in read-only mode
-  Serial.print("Trying to open ");
-  Serial.println(fullname);      
+  PRINT(F("Trying to open "));
+  PRINTLN(fullname);      
 
   bool readonly = false;
   diskfile = SD.open(fullname, FILE_WRITE);
@@ -265,26 +280,26 @@ void opendiskfile(byte drive, int index)
   }  
   // abort if not possible to open
   if (!diskfile)
-  { Serial.print("Can not open disk file");
-    Serial.println(fullname);
+  { PRINT(F("Can not open disk file"));
+    PRINTLN(fullname);
     return;
   }       
   // read the header
   byte header[16];
   int didread = diskfile.readBytes(header,16);
   if (didread!=16)
-  { Serial.println("Can not read file header");
+  { PRINTLN(F("Can not read file header"));
     diskfile.close();
     return;
   }
   // check for signature and other settings
   if (header[0]!=0x96 || header[1]!=0x02)
-  { Serial.println("Magic number not present");
+  { PRINTLN(F("Magic number not present"));
     diskfile.close();
     return;
   }
   if (header[4]!=0x80 || header[5]!=0x00)
-  { Serial.println("Can only handle 128 byte sectors");
+  { PRINTLN(F("Can only handle 128 byte sectors"));
     diskfile.close();     
     return;
   }
@@ -293,7 +308,7 @@ void opendiskfile(byte drive, int index)
   paragraphs = (paragraphs<<8) | header[3];
   paragraphs = (paragraphs<<8) | header[2];
   if (paragraphs<8 || paragraphs>0x70000)
-  { Serial.println("Disk file size out of range.");
+  { PRINTLN(F("Disk file size out of range."));
     diskfile.close();
     return;
   }
@@ -301,10 +316,11 @@ void opendiskfile(byte drive, int index)
   // seems to be a valid disk file - use it
   disksize = paragraphs >> 3;
        
-  Serial.print("SIZE: ");
-  Serial.print(disksize);
-  Serial.print(" sectors of 128 bytes");
-  Serial.println(readonly ? "(read only)" : " (writeable)" );
+  PRINT(F("SIZE: "));
+  PRINT(disksize);
+  PRINT(F(" sectors of 128 bytes"));
+  if (readonly) PRINTLN(F("(read only)"));
+  else          PRINTLN(F(" (writeable)"));
 }
 
 bool isrequesteddiskfile(File f, byte drive, int index)
@@ -361,15 +377,15 @@ void sendwithchecksum(byte* data, int len)
      {  sum = (sum - 256) + 1;  // add carry into sum
      }  
   }
-  Serial1.write(data,len);
-  Serial1.write(sum);
+  SIO.write(data,len);
+  SIO.write(sum);
 }
 
 byte receivebyte()
 {
-  int d = Serial1.read();
+  int d = SIO.read();
   while (d<0)
-  {  d = Serial1.read();
+  {  d = SIO.read();
   }
   return d;
 }
@@ -392,25 +408,25 @@ bool receivewithchecksum(byte* data, int len)
 void logcommand(byte* command)
 {
     int i;
-      Serial.print("CMD: ");
+      PRINT(F("CMD: "));
       for (i=0; i<5; i++)
       {  
-          Serial.print(command[i], HEX);
-          Serial.print(" ");
+          PRINT(command[i], HEX);
+          PRINT(F(" "));
       }
-      Serial.println("]");
+      PRINT(F("]"));
 }      
 
 void logdata(byte* data, int length)
 {
     int i;
-      Serial.print("DATA: ");
+      PRINT(F("DATA: "));
       for (i=0; i<length; i++)
       {  
-          Serial.print(data[i], HEX);
-          Serial.print(" ");
+          PRINT(data[i], HEX);
+          PRINT(" ");
       }
-      Serial.println();  
+      PRINTLN();  
 }
 
 void handlecommand_status(byte drive)
@@ -430,7 +446,7 @@ void handlecommand_status(byte drive)
      status[2] = 0xe0;  // format timeout 
      status[3] = 0x00;  // copy of internal registers  
   }
-  Serial1.write('C');  
+  SIO.write('C');  
   sendwithchecksum(status,4);
 }
 
@@ -442,11 +458,11 @@ void handlecommand_read(byte drive, unsigned int sector)
   byte data[128];
   if (!readsector(sector,data))
   {
-    Serial1.write('E');
+    SIO.write('E');
     return;
   }      
   
-  Serial1.write('C');
+  SIO.write('C');
   sendwithchecksum(data,128);
 }
 
@@ -455,26 +471,26 @@ void handlecommand_write(byte drive, unsigned int sector)
    byte data[128];
    if (!receivewithchecksum(data,128))
    {
-     Serial.println("Received sector with invalid checksum");
-     Serial1.write('E');
+     PRINTLN(F("Received sector with invalid checksum"));
+     SIO.write('E');
      return;
    } 
 
    delay(1);
-   Serial1.write('A');
+   SIO.write('A');
    
    setactivitylight();
    opendiskfile(drive, getdiskselectorvalue());
  
   if (!writesector(sector,data))
   {
-    Serial.println("Writing sector to SD card failed");
-    Serial1.write('E');
+    PRINTLN(F("Writing sector to SD card failed"));
+    SIO.write('E');
     return;
   }      
   
   delay(1);      
-  Serial1.write('C');
+  SIO.write('C');
 }
 
 
@@ -485,11 +501,11 @@ void handle_sio()
     // must wait until the command line goes low 
     while (digitalRead(PIN_SIOCOMMAND)!=LOW)
     {
-      int r = Serial1.read();  // discard any data garbage that may have arrived
+      int r = SIO.read();  // discard any data garbage that may have arrived
       if (r>=0)
       {  
-        Serial.print("Received while CMD not active: ");
-        Serial.println(r,HEX);
+        PRINT(F("Received while CMD not active: "));
+        PRINTLN(r,HEX);
       }
     }
     // read the command - but abort when command line goes high prematurely
@@ -497,7 +513,7 @@ void handle_sio()
     int commandlength=0;
     while (commandlength<5 && digitalRead(PIN_SIOCOMMAND)==LOW)
     {  
-      int r = Serial1.read();
+      int r = SIO.read();
       if (r>=0)
       {
         command[commandlength] = (byte) r;
@@ -505,17 +521,17 @@ void handle_sio()
       }
     }
     if (commandlength<5)
-    {  Serial.println("CMD went inactive before receiving full command");
+    {  PRINT(F("CMD went inactive before receiving full command"));
        return;
     }
     // waiting for command line to go high again, so it is allowed so send
     while (digitalRead(PIN_SIOCOMMAND)!=HIGH)
     { 
-      int r = Serial1.read();
+      int r = SIO.read();
       if (r>=0)
       {
-        Serial.print("Received more data before CMD went inactive: ");
-        Serial.println(r,HEX);
+        PRINT(F("Received more data before CMD went inactive: "));
+        PRINTLN(r,HEX);
       }
     }
         
@@ -529,14 +545,14 @@ void handle_sio()
     }
     if (sum!=command[4])
     {
-      Serial.print("Ignored command with invalid checksum");
+      PRINT(F("Ignored command with invalid checksum"));
       return;
     }
     // when the command is not inteded for a floppy device, ignore it
     if (command[0]<0x31 || command[0]>0x39)
     {              
-      Serial.print("Received command for different device ");
-      Serial.println(command[0], HEX);
+      PRINT(F("Received command for different device "));
+      PRINTLN(command[0], HEX);
       return;       
     }
     
@@ -544,23 +560,23 @@ void handle_sio()
     {
         case 0x53:  // STATUS
           logcommand(command);
-          Serial1.write('A');
+          SIO.write('A');
           delay(1);
           handlecommand_status(command[0]-0x31);
           break;
         case 0x52:  // READ
           logcommand(command);
-          Serial1.write('A');
+          SIO.write('A');
           delay(1);
           handlecommand_read(command[0]-0x31, ((unsigned int)command[2]) + (((unsigned int)command[3])<<8) - 1);
           break;
         case 0x57:   // WRITE WITH VERIFY
           logcommand(command);
-          Serial1.write('A');
+          SIO.write('A');
           handlecommand_write(command[0]-0x31, ((unsigned int)command[2]) + (((unsigned int)command[3])<<8) - 1);
           break;
         default:
-          Serial1.write('N');
+          SIO.write('N');
           logcommand(command);
           break;
     }
@@ -570,11 +586,11 @@ void handle_sio()
 // ---------------- MAIN PROGRAM --------------------
 void setup() {
   // start serial monitor for debugging
-  Serial.begin(9600);       
+  PRINTBEGIN(9600);
 
   // configure connection to the SIO interface
   pinMode(PIN_SIOCOMMAND,INPUT);
-  Serial1.begin(19200, SERIAL_8N1);  
+  SIO.begin(19200, SERIAL_8N1);  
   
   // start displaying digits  
   initdiskselector();
@@ -584,4 +600,7 @@ void loop()
 {
   handle_sio();
 }
+
+
+
 
