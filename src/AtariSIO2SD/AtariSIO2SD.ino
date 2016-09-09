@@ -38,7 +38,7 @@
   #define PIN_DIGIT1 3
   byte pin_segments0[8] = {A1,5,6,4,A5,A0,A2,A3}; 
   byte pin_segments1[8] = {4,A2,A0,A3,A1,5,A5,6};  
-  byte pin_buttons[4] = {8,9,7,9};  // only two connected, pin 9 is n.c.
+  byte pin_buttons[4] = {9,9,7,8};  // only two connected, pin 9 is n.c.
   #define DIGITACTIVE     LOW
   #define DIGITINACTIVE   HIGH
   #define SEGMENTACTIVE   HIGH
@@ -142,8 +142,10 @@ void polldiskselector()   // interrupt service routine (must not take much time)
                case 1: digit1value = digit1value>0 ? digit1value-1 : 9;
                        break;
                case 2: digit0value = digit0value<9 ? digit0value+1 : 0;
+                       if (digit0value==0) digit1value = digit1value<9 ? digit1value+1 : 0;
                        break;
                case 3: digit0value = digit0value>0 ? digit0value-1 : 9;
+                       if (digit0value==9) digit1value = digit1value>0 ? digit1value-1 : 9;
                        break;
             }
             valuesavedelay = 600; // 3 seconds before save
