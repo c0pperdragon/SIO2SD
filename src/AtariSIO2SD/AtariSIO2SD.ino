@@ -52,7 +52,8 @@
 
 #define EEPROM_ADDRESS  47
 
-byte prevbuttonstate[4];
+byte prevbuttonstate;
+byte timesincebuttonchange;
 
 volatile byte digit0value;  
 volatile byte digit1value;  
@@ -80,8 +81,9 @@ void initdiskselector()
   // init input buttons
   for (i=0; i<4; i++)
   {   pinMode(pin_buttons[i], INPUT_PULLUP);
-      prevbuttonstate[i] = HIGH;
   }
+  prevbuttonstate = 0;
+  timesincebuttonchange = 0;
   
   // read selector value at startup
   byte s = EEPROM.read(EEPROM_ADDRESS);
@@ -123,35 +125,41 @@ int setactivitylight()
     activitylight = 10;  
 }
 
-void polldiskselector()   // interrupt service routine (must not take much time)
-{
-  // --- query button changes ---
-  byte i;
+// interrupt service routine is called 200 times per second 
+// (must not take much time)
+void polldiskselector()   {
+  // --- query current button states ---
+  byte buttonstate = 0;
+  int i;
   for (i=0; i<4; i++)
   {
-      byte s = digitalRead(pin_buttons[i]);
-      if (s!=prevbuttonstate[i])
-      {
-        prevbuttonstate[i]=s;
-        if (s==LOW)
-        {   
-            // modify digits without needing to do divisions (must be fast)
-            switch (i)
-            {  case 0: digit1value = digit1value<9 ? digit1value+1 : 0;
-                       break;
-               case 1: digit1value = digit1value>0 ? digit1value-1 : 9;
-                       break;
-               case 2: digit0value = digit0value<9 ? digit0value+1 : 0;
-                       if (digit0value==0) digit1value = digit1value<9 ? digit1value+1 : 0;
-                       break;
-               case 3: digit0value = digit0value>0 ? digit0value-1 : 9;
-                       if (digit0value==9) digit1value = digit1value>0 ? digit1value-1 : 9;
-                       break;
-            }
-            valuesavedelay = 600; // 3 seconds before save
-        }
-      }
-  } 
+      if (digitalRead(pin_buttons[i])==LOW) buttonstate = buttonstate | (1<<i);
+  }  
+  if (buttonstate!=prevbuttonstate)
+  {
+     prevbuttonstate = buttonstate;
+     timesincebuttonchange=0;
+  }
+  // cause buttons to modify digits (either at first press or on repeat)
+  if (timesincebuttonchange==0 || timesincebuttonchange==200 && buttonstate!=0) {
+    // modify digits without needing to do divisions (must be fast)
+    if (buttonstate&1) {
+        digit1value = digit1value<9 ? digit1value+1 : 0;
+    } else if (buttonstate&2) {
+        digit1value = digit1value>0 ? digit1value-1 : 9;
+    } else if (buttonstate&4) {
+        digit0value = digit0value<9 ? digit0value+1 : 0;
+        if (digit0value==0) digit1value = digit1value<9 ? digit1value+1 : 0;
+    } else if (buttonstate&8) {
+        digit0value = digit0value>0 ? digit0value-1 : 9;
+        if (digit0value==9) digit1value = digit1value>0 ? digit1value-1 : 9;
+    }
+    valuesavedelay = 600; // 3 seconds before save
+  }
+  // measure the time the buttons are in current state (and use it for key-repeat)
+  if (timesincebuttonchange<200) timesincebuttonchange++;
+  else                           timesincebuttonchange-=10; 
+
   
   // --- handling of delay before saving the current selected value
   if (valuesavedelay>0)
