@@ -1,49 +1,45 @@
 // --------- Program code for the IOS2SD atari disk drive emulator -----------
-// This sketch support the device design using the Arduino Micro, as well as 
-// the design built on a bare Atmega382p with 8Mhz (the miniature 1050 floppy drive)). 
-// At compile time, the appropriate pins and settings will be used.
+// The program should be compatible with most arduino boards, as well
+// as with a bare-bone atmega mcu.
+// On boards with the ATmega32U4, logging via the usb uplink is enabled,
+// while the the serial communication to the SIO interface 
+// is routed over the dedicated serial pins. 
 
 #include <SPI.h>
 #include <SD.h>
 #include <TimerOne.h>
 #include <EEPROM.h>
 
-
-// all settings for the Arduino Micro based design
+// serial port RX/TX to Atari is either Serial or Serial1, 
+// and if available, use USB line for logging
 #if defined(__AVR_ATmega32U4__)
   #define SIO Serial1
   #define PRINT Serial.print
   #define PRINTLN Serial.println
   #define PRINTBEGIN Serial.begin
-  #define PIN_CHIPSELECT  13  
-  #define PIN_SIOCOMMAND  2
-  #define PIN_DIGIT0 12
-  #define PIN_DIGIT1 11
-  byte pin_segments0[8] = {3,6,7,5,9,10,8,4};
-  byte pin_segments1[8] = {3,7,4,10,8,5,6,9};
-  byte pin_buttons[4] = {A0,A1,A2,A3};
-  #define DIGITACTIVE     HIGH
-  #define DIGITINACTIVE   LOW
-  #define SEGMENTACTIVE   LOW
-  #define SEGMENTINACTIVE HIGH   
-// all settings for the miniature 1050
 #else
   #define SIO Serial
   #define PRINT(...)        1
   #define PRINTLN(...)      1
-  #define PRINTBEGIN(...);  1
-  #define PIN_CHIPSELECT  10  
-  #define PIN_SIOCOMMAND  2
-  #define PIN_DIGIT0 A4
-  #define PIN_DIGIT1 3
-  byte pin_segments0[8] = {A1,5,6,4,A5,A0,A2,A3}; 
-  byte pin_segments1[8] = {4,A2,A0,A3,A1,5,A5,6};  
-  byte pin_buttons[4] = {9,9,7,8};  // only two connected, pin 9 is n.c.
-  #define DIGITACTIVE     LOW
-  #define DIGITINACTIVE   HIGH
-  #define SEGMENTACTIVE   HIGH
-  #define SEGMENTINACTIVE LOW   
+  #define PRINTBEGIN(...)   1
 #endif
+
+// the wiring up of all components 
+                              // RX - serial from ATARI
+                              // TX - serial from Atari
+#define PIN_SIOCOMMAND  2     // CMD signal from Atari
+
+#define PIN_CHIPSELECT  10    // enables SDCARD on SPI bus
+ 
+#define PIN_DIGIT0 A4         // a LOW drives LED digit 0
+#define PIN_DIGIT1 3          // a LOW drives LED digit 1
+// the digit segments are differently assigned for digit 0 and 1  
+//           segment:    a   b   c   d   e   f   g   DP
+byte pin_segments0[8] = {A1, A0, A2, 6,  A5, 4,  5,  A3}; 
+byte pin_segments1[8] = {4,  5,  A5, A0, A1, A3, A2, 6};  
+
+#define PIN_BUTTON0  7      // input buffon 0 (connects to GND)
+#define PIN_BUTTON1  8      // input buffon 1 (connects to GND)
 
 
 // ------------------ DISK SELECTOR (LED DIGITS AND BUTTONS) -----------
@@ -62,26 +58,28 @@ int valuesavedelay;
 int savelight;
 byte activedigit; 
 
-// various digits              
-bool segmentsfordigits[7][10] = {
-    // 0      1      2      3      4      5      6      7      8     9
-  { true,  false, true,  true,  false, true,  true,  true,  true, true  },
-  { false, false, true,  true,  true,  true,  true,  false, true, true  },
-  { true,  false, true,  true,  false, true,  true,  false, true, true  },
-  { true,  false, false, false, true,  true,  true,  false, true, true  },
-  { true,  false, true,  false, false, false, true,  false, true, false },
-  { true,  true,  true,  true,  true,  false, false, true,  true, true  },
-  { true,  true,  false, true,  true,  true,  true,  true,  true, true  }
+// various digits             gfedcba
+byte digitpatterns[10] = {  B00111111,   // 0
+                            B00000110,   // 1
+                            B01011011,   // 2
+                            B01001111,   // 3
+                            B01100110,   // 4
+                            B01101101,   // 5
+                            B01111101,   // 6
+                            B00000111,   // 7
+                            B01111111,   // 8
+                            B01101111    // 9
 };
+
 
 void initdiskselector()
 {
   byte i;
 
   // init input buttons
-  for (i=0; i<4; i++)
-  {   pinMode(pin_buttons[i], INPUT_PULLUP);
-  }
+  pinMode(PIN_BUTTON0, INPUT_PULLUP);
+  pinMode(PIN_BUTTON1, INPUT_PULLUP);
+
   prevbuttonstate = 0;
   timesincebuttonchange = 0;
   
@@ -99,21 +97,22 @@ void initdiskselector()
   
   // configure and turn of digit selectors 
   pinMode(PIN_DIGIT0, OUTPUT);
-  digitalWrite (PIN_DIGIT0, DIGITINACTIVE);
+  digitalWrite (PIN_DIGIT0, HIGH);
   pinMode(PIN_DIGIT1, OUTPUT);
-  digitalWrite (PIN_DIGIT1, DIGITINACTIVE);  
+  digitalWrite (PIN_DIGIT1, HIGH);  
   // configure and turn off individual digits
   for (i=0; i<8; i++)
   {    
     pinMode(pin_segments0[i], OUTPUT);
-    digitalWrite (pin_segments0[i], SEGMENTINACTIVE);
+    digitalWrite (pin_segments0[i], LOW);
+    pinMode(pin_segments1[i], OUTPUT);
+    digitalWrite (pin_segments1[i], LOW);
   }
   
   // start timer
   Timer1.initialize(5000);     // call with 200 Hz   
   Timer1.attachInterrupt(polldiskselector);    
 }
-
 
 int getdiskselectorvalue()
 {
@@ -127,14 +126,13 @@ int setactivitylight()
 
 // interrupt service routine is called 200 times per second 
 // (must not take much time)
+// this handles user input and also drives the LED digits
 void polldiskselector()   {
   // --- query current button states ---
   byte buttonstate = 0;
-  int i;
-  for (i=0; i<4; i++)
-  {
-      if (digitalRead(pin_buttons[i])==LOW) buttonstate = buttonstate | (1<<i);
-  }  
+  if (digitalRead(PIN_BUTTON0)==LOW) buttonstate =  buttonstate | (1<<0);
+  if (digitalRead(PIN_BUTTON1)==LOW) buttonstate =  buttonstate | (1<<1);
+
   if (buttonstate!=prevbuttonstate)
   {
      prevbuttonstate = buttonstate;
@@ -144,13 +142,9 @@ void polldiskselector()   {
   if (timesincebuttonchange==0 || timesincebuttonchange==200 && buttonstate!=0) {
     // modify digits without needing to do divisions (must be fast)
     if (buttonstate&1) {
-        digit1value = digit1value<9 ? digit1value+1 : 0;
-    } else if (buttonstate&2) {
-        digit1value = digit1value>0 ? digit1value-1 : 9;
-    } else if (buttonstate&4) {
         digit0value = digit0value<9 ? digit0value+1 : 0;
         if (digit0value==0) digit1value = digit1value<9 ? digit1value+1 : 0;
-    } else if (buttonstate&8) {
+    } else if (buttonstate&2) {
         digit0value = digit0value>0 ? digit0value-1 : 9;
         if (digit0value==9) digit1value = digit1value>0 ? digit1value-1 : 9;
     }
@@ -159,8 +153,7 @@ void polldiskselector()   {
   // measure the time the buttons are in current state (and use it for key-repeat)
   if (timesincebuttonchange<200) timesincebuttonchange++;
   else                           timesincebuttonchange-=10; 
-
-  
+ 
   // --- handling of delay before saving the current selected value
   if (valuesavedelay>0)
   {
@@ -185,28 +178,28 @@ void polldiskselector()   {
   }
   
   // --- display digits alternatingly ----
-  // turn off previously active digit
-  digitalWrite (PIN_DIGIT0, DIGITINACTIVE);
-  digitalWrite (PIN_DIGIT1, DIGITINACTIVE);
-  
   // switch to other digit
   activedigit = 1-activedigit;
   
-  // turn on/off digit segments as needed (pin assignment is very arbitrary)
+  // turn on/off digit segments as needed (pin assignment is quite arbitrary)
   if (activedigit==0) {
-    byte v = digit0value;
+    digitalWrite (PIN_DIGIT1, HIGH);  // turn off digit 1
+    byte i;
+    byte v = digitpatterns[digit0value];
     for (i=0; i<7; i++) {
-       digitalWrite (pin_segments0[i], segmentsfordigits[i][v] ? SEGMENTACTIVE : SEGMENTINACTIVE);
+       digitalWrite (pin_segments0[i], (v&(1<<i)) ? HIGH : LOW);
     }
-    digitalWrite (pin_segments0[7], activitylight>0 ? SEGMENTACTIVE : SEGMENTINACTIVE);   // the DOT is used to show activity 
-    digitalWrite (PIN_DIGIT0, DIGITACTIVE);  // turn on digit 0
+    digitalWrite (pin_segments0[7], activitylight>0 ? HIGH : LOW);  // the DOT is used to show activity 
+    digitalWrite (PIN_DIGIT0, LOW);  // turn on digit 0
   } else {
-    byte v = digit1value;
+    digitalWrite (PIN_DIGIT0, HIGH);   // turn off digit 0
+    byte i;
+    byte v = digitpatterns[digit1value];
     for (i=0; i<7; i++) {
-       digitalWrite (pin_segments1[i], segmentsfordigits[i][v] ? SEGMENTACTIVE : SEGMENTINACTIVE);
+       digitalWrite (pin_segments1[i], (v&(1<<i)) ? HIGH : LOW);
     }
-     digitalWrite (pin_segments1[7], savelight>0 ? SEGMENTACTIVE : SEGMENTINACTIVE);   // the DOT is used to show settings saving 
-     digitalWrite (PIN_DIGIT1, DIGITACTIVE);  // turn on digit 1
+     digitalWrite (pin_segments1[7], savelight>0 ? HIGH : LOW);   // the DOT is used to show settings saving 
+     digitalWrite (PIN_DIGIT1, LOW);  // turn on digit 1
   }  
 }
 
@@ -375,7 +368,7 @@ bool diskavailable()
 }
 
 
-// ----------------- SIO PROTOCOL -------------------
+// --------------------- SIO PROTOCOL -----------------------
 
 void sendwithchecksum(byte* data, int len)
 {
@@ -558,8 +551,8 @@ void handle_sio()
       PRINT(F("Ignored command with invalid checksum"));
       return;
     }
-    // when the command is not inteded for a floppy device, ignore it
-    if (command[0]<0x31 || command[0]>0x39)
+    // when the command is not intended for floppy device D1 to D3, ignore it
+    if (command[0]<0x31 || command[0]>0x33)
     {              
       PRINT(F("Received command for different device "));
       PRINTLN(command[0], HEX);
@@ -593,7 +586,7 @@ void handle_sio()
 }
 
 
-// ---------------- MAIN PROGRAM --------------------
+// ------------------- INITIALIZATION  ----------------------
 void setup() {
   // start serial monitor for debugging
   PRINTBEGIN(9600);
