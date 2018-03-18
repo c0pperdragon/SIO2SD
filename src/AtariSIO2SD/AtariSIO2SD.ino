@@ -318,7 +318,7 @@ void opendiskfile(int index)
     {   pinMode(PIN_CHIPSELECT,OUTPUT);
         digitalWrite(PIN_CHIPSELECT,HIGH);
         if (!SD.begin(PIN_CHIPSELECT)) 
-        {   PRINTLN("SDCard failed, or not present");
+        {   PRINTLN(F("SDCard failed, or not present"));
             return;
         }    
         didinitsd = true;
@@ -440,6 +440,65 @@ bool diskavailable()
     else          { return false; }
 }
 
+bool creatediskfile(int index, int sectors)
+{
+    char fullname[101];
+    fullname[0] = 0;
+    strcat (fullname, "ATARI/");    
+    
+    opendiskfile(index);    
+    // if possible reuse the already available disk file name (and remove old file first)
+    if (diskfile)
+    {   strcat (fullname, diskfile.name());
+        diskfile.close();
+        if (!SD.remove(fullname)) {
+            PRINT(F("Can not remove old disk file "));
+            PRINTLN(fullname);
+            return false;
+        }
+    }
+    // otherwise invent a new disk file name
+    else
+    {   strcat(fullname, "00_disk.atr");
+        fullname[6] = '0' + (index / 10);
+        fullname[7] = '0' + (index % 10);
+    }
+
+    PRINT(F("Creating disk file "));
+    PRINT(fullname);
+    PRINT(F(" with "));
+    PRINT(sectors);
+    PRINTLN(F(" sectors"));
+    diskfile = SD.open(fullname, FILE_WRITE);
+    if (!diskfile) { return false; }
+    
+    byte chunk[16];
+    // construct header: magic number
+    chunk[0] = (byte) 0x96;
+    chunk[1] = (byte) 0x02;
+    // paragraphs
+    int paragraphs = sectors * 8; 
+    chunk[2] = (byte) (paragraphs & 0xff);
+    chunk[3] = (byte) ((paragraphs>>8) & 0xff);
+    // sector size
+    chunk[4] = (byte)128;
+    chunk[5] = (byte)0;
+    // 10 byte unused
+    int i=0;
+    for (i=6; i<16; i++) { chunk[i] = 0; }
+    diskfile.write(chunk, 16);
+    
+    // create rest of file
+    for (i=0; i<16; i++) { chunk[i] = 0x00; }
+    for (i=0; i<paragraphs; i++)
+    {   diskfile.write(chunk, 16);
+    }
+
+    diskfile.close();
+    PRINTLN(F("Finished creating disk file"));
+    return true;
+}
+
 
 // --------------------- SIO PROTOCOL -----------------------
 
@@ -487,7 +546,7 @@ void logdata(byte* data, int length)
     PRINT(F("DATA: "));
     for (i=0; i<length; i++)
     {   PRINT(data[i], HEX);
-        PRINT(" ");
+        PRINT(F(" "));
     }
     PRINTLN();  
 }
@@ -630,7 +689,24 @@ void handle_sio()
     }
         
     switch (command[1])
-    {   case 0x53:  // STATUS
+    {   
+        case 0x21:  // FORMAT SINGLE DENSITY        
+        case 0x22:  // FORMAT MEDIUM DENSITY
+        {   delay(1);
+            SIO.write('A');
+            delay(2);
+            if (creatediskfile(selecteddisk[drive], (command[1]==0x21) ? 720 : 1040))
+            {   byte buffer[128];
+                for (i=0; i<128; i++) buffer[i]=0;
+                SIO.write('C');                
+                sendwithchecksum(buffer, 128);
+            }
+            else 
+            {   SIO.write('E');
+            }
+            break;
+        }
+        case 0x53:  // STATUS
         {   delay(1);
             SIO.write('A');
             delay(2);

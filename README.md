@@ -17,9 +17,9 @@ Because there is no elaborated user-interface on the device, the naming and loca
 need to follow a fixed system: The files are searched for in a directory ATARI/
 on the root of the SDcard. Every disk file must be named nn_Anything.ats with two leading digits that correspond to the 
 numeric display on the device and the mandatory '_' character. 
-Currently only a very basic support for single density (maximum 720 sectors) 
-and enhanced density (1040 sectors) floppies is provided without special functions like
-formatting or any of the commands of third-party devices.
+Currently only a very basic support for single density (720 sectors) 
+and enhanced density (1040 sectors) floppies is provided without special functions  
+for any third-party devices.
 
 ## User interface
 You can switch though the numbered disks 00 to 99 with the two buttons. This is the maximum number of disks 
