@@ -300,38 +300,46 @@ void cleanmsb_eeprom(byte slot)
 
 // ---------------------- DISK FILE HANDLING  -----------------------
 
+
 bool didinitsd = false;
 
-File diskfile;  
+File diskfile;                 // can be a .ATR file or a directory
 unsigned int disksize;         // size in sectors
+
+File atarifile;                // currently used file of a directory (if used in this mode)
+unsigned int firstfilesector;  // first sector (numbered in "usable sectors) of the file
+byte directoryindexoffile;     // to which directory entry the current file belongs
+
 
 void opendiskfile(int index)
 {  
     // check if desired file is already open - continue to use it
-    if (diskfile && isrequesteddiskfile(diskfile,index)) { return; } 
+    if (didinitsd && diskfile && isrequesteddiskfile(diskfile,index)) { return; } 
   
-    // before switching disk file, close previous one if still open
+    // before switching disk file, close any previous open
     if (diskfile) { diskfile.close(); }
+    if (atarifile) { atarifile.close(); }
   
     // if not done, try to initialize the SD subsystem
     if (!didinitsd)
-    {   pinMode(PIN_CHIPSELECT,OUTPUT);
+    {   
+        pinMode(PIN_CHIPSELECT,OUTPUT);
         digitalWrite(PIN_CHIPSELECT,HIGH);
         if (!SD.begin(PIN_CHIPSELECT)) 
         {   PRINTLN(F("SDCard failed, or not present"));
             return;
-        }    
+        }      
         didinitsd = true;
     }
         
     // try to scan the files in the ATARI directory on the SDCARD and 
     // locate the file name beginning with the correct index (2 digits).
-    char fullname[100];
+    char fullname[60];
     fullname[0] = '\0';
   
     File root = SD.open(F("ATARI"));
     if (!root || !root.isDirectory())
-    {   PRINTLN(F("Can not locate ATARI/ directory"));
+    {   PRINTLN(F("Can not locate ATARI/ directory"));      
         return;             
     }  
     while (fullname[0]=='\0')
@@ -372,6 +380,15 @@ void opendiskfile(int index)
         PRINTLN(fullname);
         return;
     }       
+    
+    // check if the file is a directory instead of a diskfile 
+    if (diskfile.isDirectory())
+    {   PRINT(F("Using directory content to emulate a 1040 sector floppy: "));
+        PRINTLN(fullname);
+        disksize = 1040;
+        return;
+    }
+    
     // read the header
     byte header[16];
     int didread = diskfile.read(header,16);
@@ -422,15 +439,19 @@ bool isrequesteddiskfile(File f, int index)
 
 bool readsector(unsigned int sector, byte* data)
 {   
-    if (!diskfile || sector>=disksize) { return false; }
-    if (!diskfile.seek(16+((unsigned long)sector)*128) ) { return false; }
+    if (!diskfile || sector<1 || sector>disksize) { return false; }
+    if (diskfile.isDirectory()) 
+    {   if (!readsectorfromdirectory(sector,data)) { return false; }
+        return true;
+    }    
+    if (!diskfile.seek(16+((unsigned long)(sector-1))*128) ) { return false; }
     return diskfile.read(data, 128) == 128;
 }
 
 bool writesector(unsigned int sector, byte* data)
 {
-    if (!diskfile || sector>=disksize) { return false; }
-    if (!diskfile.seek(16+((unsigned long)sector)*128)) { return false; }
+    if (!diskfile || diskfile.isDirectory() || sector<1 || sector>disksize) { return false; }
+    if (!diskfile.seek(16+((unsigned long)(sector-1))*128)) { return false; }
     return diskfile.write(data, 128) == 128;
 }
 
@@ -449,7 +470,11 @@ bool creatediskfile(int index, int sectors)
     opendiskfile(index);    
     // if possible reuse the already available disk file name (and remove old file first)
     if (diskfile)
-    {   strcat (fullname, diskfile.name());
+    {   if (diskfile.isDirectory()) 
+        {   PRINTLN(F("Can not format directory"));
+            return false;
+        }
+        strcat (fullname, diskfile.name());
         diskfile.close();
         if (!SD.remove(fullname)) {
             PRINT(F("Can not remove old disk file "));
@@ -499,6 +524,169 @@ bool creatediskfile(int index, int sectors)
     return true;
 }
 
+const byte bootblocks[] PROGMEM = {
+    0x00,0x03,0x00,0x07,0x40,0x15,0x4c,0x14,0x07,0x03,0x83,0x00,0xcc,0x19,0x01,0x04,
+    0x00,0x7d,0xcb,0x07,0xac,0x0e,0x07,0xf0,0x35,0x20,0x5f,0x07,0xad,0x10,0x07,0xac,
+    0x0f,0x07,0xa6,0x24,0x8e,0x04,0x03,0xa6,0x25,0x8e,0x05,0x03,0x18,0x20,0x6c,0x07,
+    0x30,0x1c,0xac,0x11,0x07,0xb1,0x24,0x29,0x03,0xaa,0xc8,0x11,0x24,0xf0,0x11,0xb1,
+    0x24,0x48,0xc8,0xb1,0x24,0x20,0x55,0x07,0x68,0xa8,0x8a,0x4c,0x22,0x07,0xa9,0xc0,
+    0x0a,0xa8,0x60,0xa9,0x80,0x18,0x65,0x24,0x85,0x24,0x90,0x02,0xe6,0x25,0x60,0xad,
+    0x12,0x07,0x85,0x24,0xad,0x13,0x07,0x85,0x25,0x60,0x00,0x00,0x8d,0x0b,0x03,0x8c,
+    0x0a,0x03,0xa9,0x52,0xa0,0x40,0x90,0x04,0xa9,0x57,0xa0,0x80,0x08,0xa6,0x21,0xe0,
+    0x08,0xd0,0x07,0x28,0x20,0x81,0x14,0x4c,0xb9,0x07,0x28,0x8d,0x02,0x03,0xa9,0x0f,
+    0x8d,0x06,0x03,0x8c,0x17,0x13,0xa9,0x31,0x8d,0x00,0x03,0xa9,0x03,0x8d,0x09,0x13,
+    0xa9,0x80,0x8d,0x08,0x03,0x0a,0x8d,0x09,0x03,0xad,0x17,0x13,0x8d,0x03,0x03,0x20,
+    0x59,0xe4,0x10,0x05,0xce,0x09,0x13,0x10,0xf0,0xa6,0x49,0x98,0x60,0x20,0xad,0x11,
+    0x20,0x64,0x0f,0x20,0x04,0x0d,0x4c,0xc7,0x12,0x00,0x00,0x64,0x08,0x8f,0x0a,0x4d,
+    0x0a,0x8f,0x09,0xbc,0x07,0x2a,0x0b,0x80,0x40,0x20,0x10,0x08,0x04,0x02,0x01,0xff,
+    0xad,0x0c,0x07,0x85,0x24,0xad,0x0d,0x07,0x85,0x25,0xad,0x0a,0x07,0x85,0x43,0xa2,
+    0x07,0xa9,0x00,0x06,0x43,0x90,0x15,0xa0,0x05,0x91,0x24,0xa5,0x24,0x9d,0x29,0x13,
+    0xa5,0x25,0x9d,0x31,0x13,0xa9,0x90,0x20,0x55,0x07,0xa9,0x64,0x9d,0x19,0x13,0xca,
+    0x10,0xdf,0xa5,0x24,0x8d,0x39,0x13,0xa5,0x25,0x8d,0x3a,0x13,0xac,0x09,0x07,0xa2,
+    0x00,0x88,0x98,0x9d,0x21,0x13,0x30,0x03,0x20,0x53,0x07,0xe8,0xe0,0x08,0xd0,0xf1,
+    0xa5,0x24,0x8d,0xe7,0x02,0xa5,0x25,0x8d,0xe8,0x02,0xa9,0x00,0xa8,0x99,0x81,0x13,
+    0xc8,0x10,0xfa,0xa8,0xb9,0x1a,0x03,0xf0,0x0c,0xc9,0x44,0xf0,0x08,0xc8,0xc8,0xc8,
+    0xc0,0x1e,0xd0,0xf0,0x00,0xa9,0x44,0x99,0x1a,0x03,0xa9,0xcb,0x99,0x1b,0x03,0xa9,
+    0x07,0x99,0x1c,0x03,0x60,0x20,0xad,0x11,0x20,0x7d,0x0e,0xbd,0x4a,0x03,0x9d,0x82,
+    0x13,0x29,0x02,0xf0,0x03,0x4c,0x72,0x0d,0x20,0xec,0x0e,0x08,0xbd,0x82,0x13,0xc9      
+};
+// construct sectors to emulate a 1040 sector disk using data from a directory
+bool readsectorfromdirectory(unsigned int sector, byte* data)
+{
+  int i;
+  for (int i=0; i<128; i++) { data[i] = 0; };
+  
+  // boot blocks
+  if (sector>=1 && sector<=3)
+  {   for (i=0; i<128; i++)
+      {   data[i] = pgm_read_byte_near(bootblocks+(sector-1)*128+i);
+      }
+      return true;
+  }
+  // VTOC (simulate completely full disk)
+  if (sector==360)
+  {   data[0] = 2;
+      data[1] = 707 & 0xff;;
+      data[2] = (707>>8) & 0xff;
+      return true;
+  }
+  // VTOC2 (simulate completely full disk)
+  if (sector==1024)
+  {   return true;
+  }
+  // directory sectors (use data from actual SD card directory
+  if (sector>=361 && sector<=368) 
+  {   unsigned long startsector = 4;
+      int fidx;
+      for (fidx=0; fidx<64; fidx++)
+      {   trynextatarifile(fidx);
+          if (!atarifile) { break; }
+          if (sector-361 == fidx/8)
+          {   unsigned int sizeinsectors = (atarifile.size()+124) / 125;
+              unsigned int endsector = startsector;
+              for (i=0; i<sizeinsectors; i++)
+              {   endsector = (endsector==359) ? 369 : endsector+1;
+              }
+              byte* direntry = data + 16*(fidx%8);          
+              direntry[0] = endsector < 720 ? 0x62 : 0x23;  // files not usable by dos 2.0
+              direntry[1] = sizeinsectors & 0xff;
+              direntry[2] = (sizeinsectors>>8) & 0xff;
+              direntry[3] = startsector&0xff;
+              direntry[4] = (startsector>>8)&0xff;
+              for (i=5; i<16; i++) direntry[i]=32;
+              char* n = atarifile.name();              
+              int target=5;
+              for (i=0; n[i] && target<16; i++)
+              {   char c = n[i];
+                  if (!c) { break; }
+                  if (c=='.') { target=13; continue; }
+                  direntry[target] = c;
+                  target++;
+              }              
+              startsector = endsector;
+          }  
+          atarifile.close();
+      }
+      return true;
+  }  
+  // read sectors that belong to a file
+  if ( (sector>=4 && sector<=359) || (sector>=369 && sector<=1023))
+  {   unsigned long usablesector = (sector<=359) ? sector-4 : 356+(sector-369);
+      // check if need to (re)open the atari file that covers the given sector
+      if (!atarifile || usablesector<firstfilesector || usablesector>=firstfilesector+((atarifile.size()+124)/125))
+      {   if (!openatarifile(usablesector))
+          {   return false;
+          }          
+      }
+      // read data from the file      
+      unsigned long pos = (usablesector-firstfilesector)*125;
+      if (!atarifile.seek(pos)) { return false; }
+      unsigned long remainder = atarifile.size() - pos;      
+      if (remainder<=125)  // the last sector of the file
+      {   if (atarifile.read(data,remainder)!=remainder) { return false; }      
+          data[125] = directoryindexoffile<<2;
+          data[126] = 0; 
+          data[127] = remainder & 0xff; 
+      }
+      else                // there are more sectors to follow
+      {   if (atarifile.read(data,125)!=125) { return false; }      
+          unsigned int nextsector = (sector==359) ? 369 : sector+1;
+          data[125] = (directoryindexoffile<<2) | ((nextsector>>8) & 0x3);
+          data[126] = nextsector & 0xff; 
+          data[127] = 125; 
+      }   
+      return true; 
+  }
+
+  return false;
+}
+
+bool openatarifile(unsigned long usablesector)
+{
+      if (atarifile) { atarifile.close(); }
+
+      firstfilesector = 0;
+      directoryindexoffile = 0;
+      
+      while (directoryindexoffile<64)
+      {   trynextatarifile(directoryindexoffile);
+          if (!atarifile) { return false; }
+          
+          unsigned int sizeinsectors = (atarifile.size()+124) / 125;
+          if (usablesector>=firstfilesector && usablesector<firstfilesector+sizeinsectors) 
+          {   return true;
+          }
+          atarifile.close();
+          firstfilesector += sizeinsectors;
+          directoryindexoffile++;
+      }
+      return false;  
+}
+void trynextatarifile(int fidx)
+{
+    if (atarifile) { atarifile.close(); }    
+
+    if (fidx==0)  // for the first list entry try to get DOS.SYS
+    {   char fullname[50];
+        fullname[0] = 0;
+        strcat (fullname, "ATARI/");    
+        strcat (fullname, diskfile.name());
+        strcat (fullname, "/DOS.SYS");
+        atarifile = SD.open(fullname);        
+        diskfile.rewindDirectory();
+        if (atarifile) return;
+    }
+    for (;;)
+    {   atarifile = diskfile.openNextFile();
+        if (!atarifile) return;
+        // skip non-directory and DOS.SYS
+        if (!atarifile.isDirectory() && strcmp(atarifile.name(),"DOS.SYS")!=0) 
+        {   return;
+        }        
+        atarifile.close();
+    }    
+}
+
 
 // --------------------- SIO PROTOCOL -----------------------
 
@@ -514,6 +702,9 @@ void sendwithchecksum(byte* data, int len)
     }
     SIO.write(data,len);
     SIO.write(sum);
+
+//    for (i=0; i<len; i++) { PRINT(data[i], HEX); PRINT(" "); }
+//    PRINTLN();
 }
 
 byte receivebyte()
@@ -577,6 +768,7 @@ bool handlecommand_read(unsigned int sector)
     byte data[128];
     if (!readsector(sector,data))
     {   SIO.write('E');
+        PRINTLN(F("Read error"));
         return false;
     }      
     SIO.write('C');
@@ -718,7 +910,7 @@ void handle_sio()
         {   delay(1);
             SIO.write('A');
             delay(2);
-            sector = ((unsigned int)command[2]) + (((unsigned int)command[3])<<8) - 1;
+            sector = ((unsigned int)command[2]) + (((unsigned int)command[3])<<8);
             opendiskfile(selecteddisk[drive]);
             if (handlecommand_read(sector))
             {   activitylight[drive] = ACTIVITY_LIGHT_DURATION;
@@ -727,7 +919,7 @@ void handle_sio()
         }
         case 0x57:   // WRITE WITH VERIFY
         {   delay(1);
-            sector = ((unsigned int)command[2]) + (((unsigned int)command[3])<<8) - 1;
+            sector = ((unsigned int)command[2]) + (((unsigned int)command[3])<<8);
             SIO.write('A');
             if (handlecommand_write(drive,sector))
             {   activitylight[drive] = ACTIVITY_LIGHT_DURATION;
@@ -754,8 +946,7 @@ void setup()
     SIO.begin(19200, SERIAL_8N1);  
   
     // start displaying digits  
-    initdiskselector();
-
+    initdiskselector();    
 }
 
 void loop()
