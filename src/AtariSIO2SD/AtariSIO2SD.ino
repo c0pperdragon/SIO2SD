@@ -10,7 +10,7 @@
 #include <TimerOne.h>
 #include <EEPROM.h>
 
-// serial port RX/TX to Atari is either Serial or Serial1, 
+// serial port RX/TX to Atari is either Serial or Serial1, d
 // and if available, use USB line for logging
 #if defined(__AVR_ATmega32U4__)
     #define SIO Serial1
@@ -65,9 +65,10 @@ int valuesavedelay;
 byte prevbuttonstate;
 byte timesincebuttonchange;
 bool inputlock;
+bool showerror;
 
 // various digits             gfedcba
-byte digitpatterns[11] = 
+byte digitpatterns[13] = 
 {   B00111111,   // 0
     B00000110,   // 1
     B01011011,   // 2
@@ -79,9 +80,11 @@ byte digitpatterns[11] =
     B01111111,   // 8
     B01101111,   // 9
     B01000000,   // -
+    B01111001,   // E
+    B01010000,   // r
 };
 
-void initdiskselector()
+void initdiskselector(bool error)
 {
     byte i;
 
@@ -90,7 +93,6 @@ void initdiskselector()
     pinMode(PIN_BUTTON1, INPUT_PULLUP);
     pinMode(COMMON_ANODE_SELECTOR, INPUT_PULLUP);
     
-  
     // read selector values at startup
     selecteddisk[0] = read_eeprom(0);
     selecteddisk[1] = read_eeprom(1);
@@ -120,15 +122,19 @@ void initdiskselector()
     // start timer
     Timer1.initialize(5000);     // call with 200 Hz   
     Timer1.attachInterrupt(polldiskselector);    
+
+    showerror = error;
 }
+
+
 
 // interrupt service routine is called 200 times per second 
 // (must not take much time)
 // this handles user input and also drives the LED digits
 void polldiskselector()   
 {
-    // poll buttons only times per second to reduce bumping
-    if (activedigit==0) 
+    // poll buttons only 100 times per second to reduce bumping
+    if (activedigit==0 && !showerror) 
     {   byte buttonstate = 0;
     
         // --- query current button states and detect changes ---
@@ -191,7 +197,7 @@ void polldiskselector()
     // turn on/off digit segments as needed (pin assignment is quite arbitrary)
     if (activedigit==0) 
     {   byte value = selecteddisk[showndiskdrive];
-        value = (value<=99) ? (value % 10) : 10;   // when drive is off: - 
+        value = showerror ? 12 : ((value<=99) ? (value % 10) : 10);   // when drive is off: - 
         digitalWrite (PIN_DIGIT1, commoncathode ? HIGH : LOW);  // turn off digit 1
         byte i;
         byte v = digitpatterns[value];
@@ -200,7 +206,7 @@ void polldiskselector()
             else          { digitalWrite (pin_segments0[i], commoncathode ? LOW : HIGH); }
         }
         // this dot is used to see if drive 0 is visible and if activity on disk 0
-        bool dot = showndiskdrive==0;
+        bool dot = showndiskdrive==0 && !showerror;
         if (activitylight[0]>0) { dot = !dot; }
         if (dot) { digitalWrite (pin_segments0[7], commoncathode ? HIGH : LOW); }
         else     { digitalWrite (pin_segments0[7], commoncathode ? LOW : HIGH); }
@@ -208,7 +214,7 @@ void polldiskselector()
     }
     else 
     {   byte value = selecteddisk[showndiskdrive];
-        value = (value<=99) ? (value / 10) : 10;   // when drive is off: -
+        value = showerror ? 11 : ((value<=99) ? (value / 10) : 10);   // when drive is off: -
         digitalWrite (PIN_DIGIT0, commoncathode ? HIGH  : LOW);   // turn off digit 0
         byte i;
         byte v = digitpatterns[value];
@@ -217,7 +223,7 @@ void polldiskselector()
             else          { digitalWrite (pin_segments1[i], commoncathode ? LOW : HIGH); }
         }
         // this dot is used to see if drive 1 is visible and if activity on disk 1
-        bool dot = showndiskdrive==1;
+        bool dot = showndiskdrive==1 && !showerror;
         if (activitylight[1]>0) { dot = !dot; }
         if (dot) { digitalWrite (pin_segments1[7], commoncathode ? HIGH : LOW); } 
         else     { digitalWrite (pin_segments1[7], commoncathode ? LOW : HIGH); } 
@@ -301,8 +307,6 @@ void cleanmsb_eeprom(byte slot)
 // ---------------------- DISK FILE HANDLING  -----------------------
 
 
-bool didinitsd = false;
-
 File diskfile;                 // can be a .ATR file or a directory
 unsigned int disksize;         // size in sectors
 
@@ -310,28 +314,25 @@ File atarifile;                // currently used file of a directory (if used in
 unsigned int firstfilesector;  // first sector (numbered in "usable sectors) of the file
 byte directoryindexoffile;     // to which directory entry the current file belongs
 
+boolean initsdcard()
+{
+    pinMode(PIN_CHIPSELECT,OUTPUT);
+    digitalWrite(PIN_CHIPSELECT,HIGH);
+    if (!SD.begin(PIN_CHIPSELECT)) 
+    {   PRINTLN(F("SDCard failed, or not present"));
+        return false;
+    }      
+}
 
 void opendiskfile(int index)
 {  
     // check if desired file is already open - continue to use it
-    if (didinitsd && diskfile && isrequesteddiskfile(diskfile,index)) { return; } 
+    if (diskfile && isrequesteddiskfile(diskfile,index)) { return; } 
   
     // before switching disk file, close any previous open
     if (diskfile) { diskfile.close(); }
     if (atarifile) { atarifile.close(); }
   
-    // if not done, try to initialize the SD subsystem
-    if (!didinitsd)
-    {   
-        pinMode(PIN_CHIPSELECT,OUTPUT);
-        digitalWrite(PIN_CHIPSELECT,HIGH);
-        if (!SD.begin(PIN_CHIPSELECT)) 
-        {   PRINTLN(F("SDCard failed, or not present"));
-            return;
-        }      
-        didinitsd = true;
-    }
-        
     // try to scan the files in the ATARI directory on the SDCARD and 
     // locate the file name beginning with the correct index (2 digits).
     char fullname[60];
@@ -941,31 +942,25 @@ void setup()
     // start serial monitor for debugging
     PRINTBEGIN(9600);
 
+    // try to initialize the SDcard - abort if failure
+    if (!initsdcard()) 
+    {   initdiskselector(true);
+        return; 
+    }
+  
     // configure connection to the SIO interface
     pinMode(PIN_SIOCOMMAND,INPUT);
     SIO.begin(19200, SERIAL_8N1);  
-  
+
     // start displaying digits  
-    initdiskselector();    
+    initdiskselector(false);       
+
+    // main program loop (instead of loop() function)
+    for (;;) { handle_sio(); }
 }
 
 void loop()
 {
-    handle_sio();
-/*
-    delay(1000);
-    opendiskfile(0,0);
-    
-    byte data[128];
-    if (readsector(0,data))
-    {
-        int i;
-        for (i=0; i<128; i++)
-        {  PRINT(data[i],HEX);
-        }
-        PRINTLN();
-    }
-*/    
 }
 
 
