@@ -22,6 +22,11 @@
     #define PRINT(...)        1
     #define PRINTLN(...)      1
     #define PRINTBEGIN(...)   1
+//    #include <SoftwareSerial.h>
+//    SoftwareSerial Logger(A7, 13); // RX, TX
+//    #define PRINT Logger.print  // (...)        1
+//    #define PRINTLN Logger.println   // (...)      1
+//    #define PRINTBEGIN Logger.begin  // (...)   1
 #endif
 
 // ------------------------ the wiring up of all components ------------------------
@@ -84,7 +89,7 @@ byte digitpatterns[13] =
     B01010000,   // r
 };
 
-void initdiskselector(bool error)
+void initdiskselector()
 {
     byte i;
 
@@ -122,8 +127,6 @@ void initdiskselector(bool error)
     // start timer
     Timer1.initialize(5000);     // call with 200 Hz   
     Timer1.attachInterrupt(polldiskselector);    
-
-    showerror = error;
 }
 
 
@@ -306,6 +309,7 @@ void cleanmsb_eeprom(byte slot)
 
 // ---------------------- DISK FILE HANDLING  -----------------------
 
+boolean isinitsd = false;
 
 File diskfile;                 // can be a .ATR file or a directory
 unsigned int disksize;         // size in sectors
@@ -314,15 +318,6 @@ File atarifile;                // currently used file of a directory (if used in
 unsigned int firstfilesector;  // first sector (numbered in "usable sectors) of the file
 byte directoryindexoffile;     // to which directory entry the current file belongs
 
-boolean initsdcard()
-{
-    pinMode(PIN_CHIPSELECT,OUTPUT);
-    digitalWrite(PIN_CHIPSELECT,HIGH);
-    if (!SD.begin(PIN_CHIPSELECT)) 
-    {   PRINTLN(F("SDCard failed, or not present"));
-        return false;
-    }      
-}
 
 void opendiskfile(int index)
 {  
@@ -332,6 +327,19 @@ void opendiskfile(int index)
     // before switching disk file, close any previous open
     if (diskfile) { diskfile.close(); }
     if (atarifile) { atarifile.close(); }
+
+    // if not done already try to initialize the SDcard - on failure can not resume
+    if (!isinitsd)
+    {
+        pinMode(PIN_CHIPSELECT,OUTPUT);
+        digitalWrite(PIN_CHIPSELECT,HIGH);
+        if (!SD.begin(PIN_CHIPSELECT)) 
+        {   PRINTLN(F("SDCard failed, or not present"));
+            return;
+            showerror = true;
+        }      
+        isinitsd = true;
+    }
   
     // try to scan the files in the ATARI directory on the SDCARD and 
     // locate the file name beginning with the correct index (2 digits).
@@ -941,26 +949,19 @@ void setup()
 {
     // start serial monitor for debugging
     PRINTBEGIN(9600);
-
-    // try to initialize the SDcard - abort if failure
-    if (!initsdcard()) 
-    {   initdiskselector(true);
-        return; 
-    }
-  
+    PRINTLN(F("Start"));
+    
     // configure connection to the SIO interface
     pinMode(PIN_SIOCOMMAND,INPUT);
     SIO.begin(19200, SERIAL_8N1);  
 
     // start displaying digits  
-    initdiskselector(false);       
-
-    // main program loop (instead of loop() function)
-    for (;;) { handle_sio(); }
+    initdiskselector();       
 }
 
 void loop()
 {
+    handle_sio();
 }
 
 
