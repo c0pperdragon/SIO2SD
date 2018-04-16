@@ -16,18 +16,24 @@ The floppy drive emulator needs an SDcard containing .ats files for each individ
 Because there is no elaborated user-interface on the device, the naming and location of the files 
 need to follow a fixed system: The files are searched for in a directory ATARI/
 on the root of the SDcard. Every disk file must be named nn_Anything.ats with two leading digits that correspond to the 
-numeric display on the device and the mandatory '_' character. 
+numeric display on the device and the mandatory '_' character. Alternatively you can also
+have a folder named nn_Anything with individual files inside. Such a folder will be emulated 
+as an read-only enhanced density floppy containing these files.
+
 Currently only a very basic support for single density (720 sectors) 
 and enhanced density (1040 sectors) floppies is provided without special functions  
 for any third-party devices.
 
+
 ## User interface
 You can switch though the numbered disks 00 to 99 with the two buttons. This is the maximum number of disks 
 supported on a single SDcard. When you switch beyond 99, you will see -- on the display, which means the device
-now emulates a switched off floppy drive. 
+now emulates a switched off floppy drive. Selecting a number for which no diskfile exists, will simulate 
+a device with no floppy inserted (in this case you can create a diskfile with the DOS format functions).
+
 You can also emulate a second floppy drive, which is very usable for example for holding the save disks
 for games that support this. To do so, you need to press both buttons to make the small indicator dot appear
-on the other LCD block. This means that the number you see in the display is the floppy that is inserted
+on the left LCD block. This means that the number you see in the display is the floppy that is inserted
 in drive 2. This floppy can now also be changed with the two buttons. It is even possible to select the same 
 floppy in both drives at once (but this is probably of no great use).
 
@@ -35,11 +41,15 @@ floppy in both drives at once (but this is probably of no great use).
 ## Hardware Variants
 
 * First prototype with Arduino Micro. 
-This was hand-wired. No longer suppported by the firmware.
+This was hand-wired. No longer supported by the firmware.
+
+![alt text](doc/initialprototype.jpg)
 
 * Bare bone ATmega328 (DIP package)
 Designed to fit into a small form factor. MCU is running at 8MHz on 3.3V and can talk to SDCard without level shifters. 
-LEDs have resistors on the digit select lines only, therefore the brightness various with the pattern.
+LEDs have resistors on the digit select lines only, therefore the brightness varies with the pattern.
+
 
 * Breadboard setup with Arduino Micro
 Also having only 2 resistors for the LEDs and a level shifter to the SDCard interface.
+
