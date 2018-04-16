@@ -44,11 +44,11 @@ This was hand-wired. No longer supported by the firmware.
 
 ![alt text](doc/initialprototype.jpg)
 
-* Breadboard setup with Arduino Micro
-Due to the MCU running with 5V, I need level shifters to interface with the SDCard.
+* Breadboard setup with Arduino Micro.
+Because the MCU is running with 5V, I need level shifters to interface with the SDCard.
 To keep the part count down, this setup only uses a single resistor per LED digit which causes varying brightness of the display segments.
 
-* Bare bone ATmega328 (DIP package)
+* Bare bone ATmega328 (DIP package).
 Designed to fit into a small form factor by using a home-etched two board design.
 The MCU is running at 8MHz on 3.3V and can talk to SDCard without level shifters. 
 The LEDs have resistors on the digit select lines only, therefore the brightness varies with the pattern.
