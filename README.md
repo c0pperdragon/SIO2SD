@@ -1,28 +1,27 @@
 # SIO2SD
 An Arduino-based floppy drive emulator for the Atari 8 bit computers.
 
-This small Arduino build emulates an Atari 1050 floppy drive to connect 
-to an original Atari 8-bit computer. The program is compatible with 
+This small Arduino build emulates an Atari 1050 floppy drive to connect
+to an original Atari 8-bit computer. The program is compatible with
 most Arduino boards. And for boards based on the Atmega32u4 it also provides
 various log messages on the serial monitor to help debugging (mainly for my own use).
 
-For a breadboard setup like my development device, you will need two push buttons, 
+For a breadboard setup like my development device, you will need two push buttons,
 two 7-digit LEDs and one SDCard socket (with built-in or separate level shifters) and
 some wires and resistors. The connectivity is pretty standard and you will find
 the details as comments in the source code.
 
 ## Emulated floppies on SDcard
 The floppy drive emulator needs an SDcard containing .ats files for each individual floppy disk.
-Because there is no elaborated user-interface on the device, the naming and location of the files 
+Because there is no elaborated user-interface on the device, the naming and location of the files
 need to follow a fixed system: The files are searched for in a directory ATARI/
-on the root of the SDcard. Every disk file must be named nn_Anything.ats with two leading digits that correspond to the 
+on the root of the SDcard. Every disk file must be named nn_Anything.ats with two leading digits that correspond to the
 numeric display on the device and the mandatory '_' character. Alternatively you can also
-have a folder named nn_Anything with individual files inside. Such a folder will be emulated 
+have a folder named nn_Anything with individual files inside. Such a folder will be emulated
 as an read-only enhanced density floppy containing these files.
 
-Currently only a very basic support for single density (720 sectors) 
-and enhanced density (1040 sectors) floppies is provided without special functions  
-for any third-party devices.
+Currently only a very basic support for single density (720 sectors)
+and enhanced density (1040 sectors) floppies is provided without special functions for any third-party devices.
 
 
 ## User interface
