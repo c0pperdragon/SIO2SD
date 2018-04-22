@@ -27,7 +27,7 @@ and enhanced density (1040 sectors) floppies is provided without special functio
 ## User interface
 You can switch though the numbered disks 00 to 99 with the two buttons. This is the maximum number of disks 
 supported on a single SDcard. When you switch beyond 99, you will see -- on the display, which means the device
-now emulates a switched off floppy drive. Selecting a number for which no diskfile exists, will simulate 
+now emulates a switched off floppy drive. Selecting a number for which no diskfile exists will simulate 
 a device with no floppy inserted (in this case you can create a diskfile with the DOS format functions).
 
 You can also emulate a second floppy drive, which is very usable for example for holding the save disks
@@ -42,13 +42,20 @@ floppy in both drives at once (but this is probably of no great use).
 * First prototype with Arduino Micro. 
 This was hand-wired. No longer supported by the firmware.
 
-![alt text](doc/initialprototype.jpg)
+![Initial Prototype](doc/initialprototype.jpg)
 
 * Breadboard setup with Arduino Micro.
-Because the MCU is running with 5V, I need level shifters to interface with the SDCard.
+Because the MCU is running with 5V, I need level shifters to interface with the SDCard. This setup directly drives the 
+Data-In line of the Atari without considering a multiple-slave configuration. This could be corrected with a simple schottky diode.
 To keep the part count down, this setup only uses a single resistor per LED digit which causes varying brightness of the display segments.
+
+![Breadboard](doc/breadboard.jpg)
 
 * Bare bone ATmega328 (DIP package).
 Designed to fit into a small form factor by using a home-etched two board design.
-The MCU is running at 8MHz on 3.3V and can talk to SDCard without level shifters. 
+The MCU is running at 8MHz on 3.3V and can talk to SDCard without level shifters. The logic level difference between Atari and 
+the MCU causes the incoming SIO high levels to be pulled down to about 3.9V by the internal clamp diodes. This only creates 
+a small current (0.2mA) and should be OK as long as these lines are only driven by the pull-up resistors of the Atari.
 The LEDs have resistors on the digit select lines only, therefore the brightness varies with the pattern.
+
+![Double PCB layout](doc/doubleboard.jpg)

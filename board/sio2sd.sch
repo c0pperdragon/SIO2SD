@@ -37,7 +37,7 @@ encoding utf-8
 Sheet 1 1
 Title "SIO2SD single board"
 Date ""
-Rev "1"
+Rev "2"
 Comp ""
 Comment1 ""
 Comment2 ""
@@ -193,8 +193,6 @@ Text Label 4950 3900 0    60   ~ 0
 Digit1
 Text Label 6400 3600 0    60   ~ 0
 RX
-Text Label 6400 3500 0    60   ~ 0
-TX
 Text Label 6400 3700 0    60   ~ 0
 CMD
 $Comp
@@ -406,12 +404,6 @@ Wire Wire Line
 	6700 3200 6700 3400
 Wire Wire Line
 	4800 3600 6750 3600
-Wire Wire Line
-	5700 3500 6750 3500
-Wire Wire Line
-	5700 3500 5700 3700
-Wire Wire Line
-	5700 3700 4800 3700
 Wire Wire Line
 	3400 1250 3400 1600
 Wire Wire Line
@@ -830,4 +822,25 @@ Wire Wire Line
 Wire Wire Line
 	10050 4400 9800 4400
 Connection ~ 9800 4400
+$Comp
+L D_Schottky_Small D1
+U 1 1 5ADC4B95
+P 6100 3500
+F 0 "D1" H 6050 3580 50  0000 L CNN
+F 1 "0.2V" H 5900 3550 50  0000 C CNN
+F 2 "Diodes_SMD:D_MicroMELF_Hadsoldering" V 6100 3500 50  0001 C CNN
+F 3 "" V 6100 3500 50  0000 C CNN
+	1    6100 3500
+	1    0    0    -1  
+$EndComp
+Text Label 6400 3500 0    60   ~ 0
+TX
+Wire Wire Line
+	5700 3700 4800 3700
+Wire Wire Line
+	5700 3500 5700 3700
+Wire Wire Line
+	5700 3500 6000 3500
+Wire Wire Line
+	6200 3500 6750 3500
 $EndSCHEMATC
