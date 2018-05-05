@@ -7,7 +7,6 @@
 
 #include <SPI.h>
 #include <SD.h>
-#include <TimerOne.h>
 #include <EEPROM.h>
 
 // serial port RX/TX to Atari is either Serial or Serial1, d
@@ -89,6 +88,10 @@ byte digitpatterns[13] =
     B01010000,   // r
 };
 
+#define TIMERFREQUENCY ((F_CPU/2)/256)      // timer frequency after prescaling of 256 (in Hz)
+#define TIMERCYCLES  (TIMERFREQUENCY/200)   // this many timer ticks to get a 200Hz interrupt period
+#define TIMERRESETVALUE (65536-TIMERCYCLES) // set counter to overflow in given time
+
 void initdiskselector()
 {
     byte i;
@@ -124,16 +127,26 @@ void initdiskselector()
         pinMode(pin_segments1[i], OUTPUT);
         digitalWrite (pin_segments1[i], LOW);
     }  
-    // start timer
-    Timer1.initialize(5000);     // call with 200 Hz   
-    Timer1.attachInterrupt(polldiskselector);    
-}
 
+    // start timer
+    noInterrupts();  
+    TCCR1A = 0;
+    TCCR1B = 0;
+    TCNT1 = TIMERRESETVALUE;  // Timer nach obiger Rechnung vorbelegen
+    TCCR1B |= (1 << CS12);    // 256 als Prescale-Wert spezifizieren
+    TIMSK1 |= (1 << TOIE1);   // Timer Overflow Interrupt aktivieren
+    interrupts();              // alle Interrupts scharf schalten
+}
 
 
 // interrupt service routine is called 200 times per second 
 // (must not take much time)
 // this handles user input and also drives the LED digits
+ISR(TIMER1_OVF_vect)        
+{
+  TCNT1 = TIMERRESETVALUE; 
+  polldiskselector();
+}
 void polldiskselector()   
 {
     // poll buttons only 100 times per second to reduce bumping
