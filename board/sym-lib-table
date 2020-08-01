@@ -1,0 +1,4 @@
+(sym_lib_table
+  (lib (name sio2sd-rescue)(type Legacy)(uri ${KIPRJMOD}/sio2sd-rescue.lib)(options "")(descr ""))
+  (lib (name components)(type Legacy)(uri ${KIPRJMOD}/components.lib)(options "")(descr ""))
+)
