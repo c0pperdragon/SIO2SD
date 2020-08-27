@@ -11,6 +11,11 @@ two 7-digit LEDs and one SDCard socket (with built-in or separate level shifters
 some wires and resistors. The connectivity is pretty standard and you will find
 the details as comments in the source code.
 
+For a more polished product, I have designed a PCB that can fit into a 3D-printed
+case that resembles a tiny floppy drive with the SD card acting as a tiny floppy disk.
+
+![Big computer, small floppy drive](mini1050.jpg)
+
 ## Emulated floppies on SDcard
 The floppy drive emulator needs an SDcard containing .ats files for each individual floppy disk.
 Because there is no elaborated user-interface on the device, the naming and location of the files
@@ -37,25 +42,16 @@ in drive 2. This floppy can now also be changed with the two buttons. It is even
 floppy in both drives at once (but this is probably of no great use).
 
 
-## Hardware Variants
+## Latest hardware
 
-* First prototype with Arduino Micro. 
-This was hand-wired. No longer supported by the firmware.
+![Front side](images/board_front.jpg)
+![Back side](images/board_back.jpg)
 
-![Initial Prototype](doc/initialprototype.jpg)
+## 3D-printed case
 
-* Breadboard setup with Arduino Micro.
-Because the MCU is running with 5V, I need level shifters to interface with the SDCard. This setup directly drives the 
-Data-In line of the Atari without considering a multiple-slave configuration. This could be corrected with a simple schottky diode.
-To keep the part count down, this setup only uses a single resistor per LED digit which causes varying brightness of the display segments.
+My brother went to greate lengths, designing a proper case for the floppy emulator. 
+In my oppinion, this now looks absolutely phantastic.  
 
-![Breadboard](doc/breadboard.jpg)
+![Individual parts of the case](images/case_parts.jpg)
+![Completely assembled](images/assembled.jpg)
 
-* Bare bone ATmega328 (DIP package).
-Designed to fit into a small form factor by using a home-etched two board design.
-The MCU is running at 8MHz on 3.3V and can talk to SDCard without level shifters. The logic level difference between Atari and 
-the MCU causes the incoming SIO high levels to be pulled down to about 3.9V by the internal clamp diodes. This only creates 
-a small current (0.2mA) and should be OK as long as these lines are only driven by the pull-up resistors of the Atari.
-The LEDs have resistors on the digit select lines only, therefore the brightness varies with the pattern.
-
-![Double PCB layout](doc/doubleboard.jpg)
